@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<rss version="2.0">
+<channel>
+  <title>EPW Editorials</title>
+  <link>https://www.epw.in/editorials</link>
+  <description>EPW Editorials Auto Feed</description>
+  <item>
+    <title>EPW Editorials Feed Active</title>
+    <link>https://www.epw.in/editorials</link>
+    <pubDate>2024-01-01</pubDate>
+  </item>
+</channel>
+</rss>
