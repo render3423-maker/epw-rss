@@ -1,88 +1,104 @@
-      - name: Run RSS generator
+name: Update EPW RSS Automatically
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-rss:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml
+          
+      - name: Generate RSS feed
         run: |
           cat > generate_rss.py << 'EOF'
           import requests
           from bs4 import BeautifulSoup
-          from feedgenerator import FeedGenerator
           import datetime
-          import re
           
-          def get_epw_articles():
+          # Simple RSS generator
+          def generate_rss():
               url = "https://www.epw.in/editorials"
-              headers = {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-              }
               
               try:
-                  response = requests.get(url, headers=headers, timeout=10)
-                  soup = BeautifulSoup(response.content, 'html.parser')
+                  response = requests.get(url, timeout=10)
+                  soup = BeautifulSoup(response.content, 'lxml')
                   
-                  articles = []
+                  rss_content = ['<?xml version="1.0"?>']
+                  rss_content.append('<rss version="2.0">')
+                  rss_content.append('<channel>')
+                  rss_content.append('<title>EPW Editorials</title>')
+                  rss_content.append('<link>https://www.epw.in/editorials</link>')
+                  rss_content.append('<description>EPW Editorials Auto Feed</description>')
                   
-                  # Try multiple selectors for EPW's structure
-                  selectors = [
-                      'a[href*="/engage/"]',
-                      'a[href*="/journal/"]',
-                      '.title a',
-                      'h2 a',
-                      'h3 a',
-                      '.view-content a',
-                      '.node-title a'
-                  ]
-                  
-                  for selector in selectors:
-                      links = soup.select(selector)
-                      for link in links:
-                          href = link.get('href', '')
-                          text = link.get_text().strip()
+                  # Simple article extraction
+                  count = 0
+                  for link in soup.find_all('a', href=True):
+                      href = link['href']
+                      text = link.get_text().strip()
+                      
+                      if ('engage' in href or 'journal' in href) and len(text) > 30:
+                          if not href.startswith('http'):
+                              href = 'https://www.epw.in' + href
                           
-                          if (href and 
-                              ('/engage/' in href or '/journal/' in href or len(text) > 30) and
-                              len(text) > 20 and
-                              not any(x in text.lower() for x in ['login', 'subscribe', 'current issue', 'home'])):
-                              
-                              full_url = href if href.startswith('http') else f'https://www.epw.in{href}'
-                              
-                              # Avoid duplicates
-                              if not any(a['link'] == full_url for a in articles):
-                                  articles.append({
-                                      'title': text[:200],
-                                      'link': full_url,
-                                      'date': datetime.datetime.utcnow()
-                                  })
+                          rss_content.append('<item>')
+                          rss_content.append(f'<title>{text}</title>')
+                          rss_content.append(f'<link>{href}</link>')
+                          rss_content.append(f'<pubDate>{datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")}</pubDate>')
+                          rss_content.append('</item>')
+                          
+                          count += 1
+                          if count >= 10:
+                              break
                   
-                  return articles[:15]  # Return max 15 articles
+                  rss_content.append('</channel>')
+                  rss_content.append('</rss>')
+                  
+                  return '\n'.join(rss_content)
                   
               except Exception as e:
-                  print(f"Error scraping EPW: {e}")
-                  return []
+                  # Fallback RSS
+                  return f'''<?xml version="1.0"?>
+<rss version="2.0">
+<channel>
+<title>EPW Editorials</title>
+<link>https://www.epw.in/editorials</link>
+<description>EPW Editorials - Error: {e}</description>
+<item>
+<title>Check EPW Website for New Editorials</title>
+<link>https://www.epw.in/editorials</link>
+<pubDate>{datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")}</pubDate>
+</item>
+</channel>
+</rss>'''
           
-          # Generate RSS feed
-          fg = FeedGenerator()
-          fg.title('EPW Editorials')
-          fg.link(href='https://www.epw.in/editorials', rel='alternate')
-          fg.description('Automated EPW Editorials Feed')
-          fg.lastBuildDate(datetime.datetime.utcnow())
+          # Write RSS file
+          rss_output = generate_rss()
+          with open('epw-feed.xml', 'w') as f:
+              f.write(rss_output)
           
-          articles = get_epw_articles()
-          
-          if articles:
-              for article in articles:
-                  fe = fg.add_entry()
-                  fe.title(article['title'])
-                  fe.link(href=article['link'])
-                  fe.pubDate(article['date'])
-          else:
-              # Fallback if no articles found
-              fe = fg.add_entry()
-              fe.title('EPW Editorials - Check website for new articles')
-              fe.link(href='https://www.epw.in/editorials')
-              fe.pubDate(datetime.datetime.utcnow())
-          
-          # Save RSS file
-          fg.rss_file('epw-feed.xml', encoding='UTF-8')
-          
-          print(f"Generated RSS feed with {len(articles)} articles")
+          print("RSS feed generated successfully")
           EOF
           
           python generate_rss.py
+          
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add epw-feed.xml
+          git diff --staged --quiet || git commit -m "Auto-update EPW RSS"
+          git push
